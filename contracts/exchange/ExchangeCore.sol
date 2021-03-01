@@ -12,6 +12,7 @@ import "../lib/StaticCaller.sol";
 import "../lib/ReentrancyGuarded.sol";
 import "../lib/EIP712.sol";
 import "../lib/EIP1271.sol";
+import "../lib/EIP1271Mod.sol";
 import "../registry/ProxyRegistryInterface.sol";
 import "../registry/AuthenticatedProxy.sol";
 
@@ -153,7 +154,7 @@ contract ExchangeCore is ReentrancyGuarded, StaticCaller, EIP712 {
         return true;
     }
 
-    function validateOrderAuthorization(bytes32 hash, address maker, bytes memory signature)
+    function validateOrderAuthorization(bytes32 hash, address maker, bytes memory signature, Call memory call)
         internal
         view
         returns (bool)
@@ -183,6 +184,10 @@ contract ExchangeCore is ReentrancyGuarded, StaticCaller, EIP712 {
 
         /* (c): Contract-only authentication: EIP/ERC 1271. */
         if (isContract) {
+
+            if (ERC1271Mod(maker).isValidSignature(abi.encodePacked(calculatedHashToSign), signature, call.data) == EIP_1271_MAGICVALUE) {
+                return true;
+            }
 
             if (ERC1271(maker).isValidSignature(abi.encodePacked(calculatedHashToSign), signature) == EIP_1271_MAGICVALUE) {
                 return true;
@@ -321,10 +326,10 @@ contract ExchangeCore is ReentrancyGuarded, StaticCaller, EIP712 {
             (bytes memory firstSignature, bytes memory secondSignature) = abi.decode(signatures, (bytes, bytes));
 
             /* Check first order authorization. */
-            require(validateOrderAuthorization(firstHash, firstOrder.maker, firstSignature), "First order failed authorization");
+            require(validateOrderAuthorization(firstHash, firstOrder.maker, firstSignature, firstCall), "First order failed authorization");
 
             /* Check second order authorization. */
-            require(validateOrderAuthorization(secondHash, secondOrder.maker, secondSignature), "Second order failed authorization");
+            require(validateOrderAuthorization(secondHash, secondOrder.maker, secondSignature, secondCall), "Second order failed authorization");
         }
 
         /* INTERACTIONS */
@@ -358,14 +363,14 @@ contract ExchangeCore is ReentrancyGuarded, StaticCaller, EIP712 {
 
         /* EFFECTS */
 
-        /* Update first order fill, if necessary. */
+        /* Update first order fill, if necessary. When the sender is the maker, this is not done in order to save gas. */
         if (firstOrder.maker != msg.sender) {
             if (firstFill != previousFirstFill) {
                 fills[firstOrder.maker][firstHash] = firstFill;
             }
         }
 
-        /* Update second order fill, if necessary. */
+        /* Update second order fill, if necessary. When the sender is the maker, this is not done in order to save gas. */
         if (secondOrder.maker != msg.sender) {
             if (secondFill != previousSecondFill) {
                 fills[secondOrder.maker][secondHash] = secondFill;
